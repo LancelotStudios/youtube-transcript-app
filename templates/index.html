@@ -80,6 +80,7 @@
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.08);
             padding: 20px;
+            margin-bottom: 16px;
         }
 
         .result-header {
@@ -113,11 +114,50 @@
         .icon-btn:hover { background: #f0f0f0; }
 
         .transcript-text {
-            max-height: 500px;
+            max-height: 400px;
             overflow-y: auto;
             line-height: 1.7;
             font-size: 0.95rem;
             white-space: pre-wrap;
+        }
+
+        .summarize-row {
+            display: none;
+            margin-bottom: 16px;
+        }
+
+        .summarize-btn {
+            background: #7c3aed;
+            width: 100%;
+            padding: 14px;
+            font-size: 1.05rem;
+            border-radius: 8px;
+        }
+
+        .summarize-btn:hover { background: #6d28d9; }
+
+        .summary-box {
+            display: none;
+            background: #fff;
+            border-left: 4px solid #7c3aed;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            padding: 20px;
+        }
+
+        .summary-content {
+            line-height: 1.8;
+            font-size: 0.95rem;
+        }
+
+        .summary-content strong { display: inline; }
+
+        .summary-content ul {
+            margin: 4px 0 12px 20px;
+        }
+
+        .summary-content li {
+            margin-bottom: 4px;
         }
 
         .spinner {
@@ -131,7 +171,7 @@
 <body>
     <div class="container">
         <h1>YouTube Transcript Grabber</h1>
-        <p class="subtitle">Paste a YouTube link to get its transcript.</p>
+        <p class="subtitle">Paste a YouTube link to get its transcript and AI summary.</p>
 
         <div class="input-row">
             <input type="text" id="urlInput" placeholder="https://www.youtube.com/watch?v=..." />
@@ -145,11 +185,11 @@
             <div class="result-header">
                 <h2>Transcript</h2>
                 <div class="actions">
-                    <button class="icon-btn" onclick="copyToClipboard()">
+                    <button class="icon-btn" onclick="copyText('transcript')">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
                         Copy
                     </button>
-                    <button class="icon-btn" onclick="downloadTxt()">
+                    <button class="icon-btn" onclick="downloadTxt('transcript', 'transcript.txt')">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                         Download
                     </button>
@@ -157,12 +197,35 @@
             </div>
             <div id="transcript" class="transcript-text"></div>
         </div>
+
+        <!-- Summarize button -->
+        <div id="summarizeRow" class="summarize-row">
+            <button class="summarize-btn" id="summarizeBtn" onclick="summarize()">Summarize with Gemini AI</button>
+        </div>
+
+        <div id="summarySpinner" class="spinner">Generating summary with Gemini...</div>
+
+        <!-- Summary result -->
+        <div id="summaryBox" class="summary-box">
+            <div class="result-header">
+                <h2>AI Summary</h2>
+                <div class="actions">
+                    <button class="icon-btn" onclick="copyText('summaryContent')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+                        Copy
+                    </button>
+                    <button class="icon-btn" onclick="downloadTxt('summaryContent', 'summary.txt')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Download
+                    </button>
+                </div>
+            </div>
+            <div id="summaryContent" class="summary-content"></div>
+        </div>
     </div>
 
     <script>
         const urlInput = document.getElementById('urlInput');
-
-        // Allow pressing Enter to fetch
         urlInput.addEventListener('keydown', (e) => {
             if (e.key === 'Enter') fetchTranscript();
         });
@@ -175,9 +238,13 @@
             const error = document.getElementById('error');
             const spinner = document.getElementById('spinner');
             const result = document.getElementById('result');
+            const summarizeRow = document.getElementById('summarizeRow');
+            const summaryBox = document.getElementById('summaryBox');
 
             error.style.display = 'none';
             result.style.display = 'none';
+            summarizeRow.style.display = 'none';
+            summaryBox.style.display = 'none';
             spinner.style.display = 'block';
             btn.disabled = true;
 
@@ -195,6 +262,7 @@
                 } else {
                     document.getElementById('transcript').textContent = data.transcript;
                     result.style.display = 'block';
+                    summarizeRow.style.display = 'block';
                 }
             } catch (err) {
                 error.textContent = 'Something went wrong. Please try again.';
@@ -205,22 +273,68 @@
             }
         }
 
-        function copyToClipboard() {
-            const text = document.getElementById('transcript').textContent;
+        async function summarize() {
+            const transcript = document.getElementById('transcript').textContent;
+            const btn = document.getElementById('summarizeBtn');
+            const spinner = document.getElementById('summarySpinner');
+            const summaryBox = document.getElementById('summaryBox');
+            const error = document.getElementById('error');
+
+            error.style.display = 'none';
+            summaryBox.style.display = 'none';
+            spinner.style.display = 'block';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/summarize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ transcript })
+                });
+                const data = await res.json();
+
+                if (!res.ok) {
+                    error.textContent = data.error;
+                    error.style.display = 'block';
+                } else {
+                    // Convert markdown-style formatting to HTML
+                    let html = data.summary
+                        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                        .replace(/^\* (.*)/gm, '<li>$1</li>')
+                        .replace(/^- (.*)/gm, '<li>$1</li>')
+                        .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
+                        .replace(/\n\n/g, '<br><br>')
+                        .replace(/\n/g, '<br>');
+                    document.getElementById('summaryContent').innerHTML = html;
+                    summaryBox.style.display = 'block';
+                }
+            } catch (err) {
+                error.textContent = 'Something went wrong generating the summary.';
+                error.style.display = 'block';
+            } finally {
+                spinner.style.display = 'none';
+                btn.disabled = false;
+            }
+        }
+
+        function copyText(elementId) {
+            const el = document.getElementById(elementId);
+            const text = el.textContent || el.innerText;
             navigator.clipboard.writeText(text).then(() => {
                 const btn = event.currentTarget;
-                const originalText = btn.innerHTML;
+                const original = btn.innerHTML;
                 btn.innerHTML = btn.innerHTML.replace('Copy', 'Copied!');
-                setTimeout(() => btn.innerHTML = originalText, 1500);
+                setTimeout(() => btn.innerHTML = original, 1500);
             });
         }
 
-        function downloadTxt() {
-            const text = document.getElementById('transcript').textContent;
+        function downloadTxt(elementId, filename) {
+            const el = document.getElementById(elementId);
+            const text = el.textContent || el.innerText;
             const blob = new Blob([text], { type: 'text/plain' });
             const a = document.createElement('a');
             a.href = URL.createObjectURL(blob);
-            a.download = 'transcript.txt';
+            a.download = filename;
             a.click();
             URL.revokeObjectURL(a.href);
         }
