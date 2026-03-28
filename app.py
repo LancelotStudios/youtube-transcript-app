@@ -1,9 +1,9 @@
 import os
 import re
 import logging
+import requests as req
 from flask import Flask, render_template, request, jsonify
 from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api.proxies import WebshareProxyConfig
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -24,6 +24,28 @@ def extract_video_id(url):
     return None
 
 
+def get_free_proxy():
+    """Fetch a free proxy from Webshare's free proxy list using the API key."""
+    api_key = os.environ.get('WEBSHARE_PROXY_TOKEN')
+    if not api_key:
+        return None
+    try:
+        resp = req.get(
+            'https://proxy.webshare.io/api/v2/proxy/list/?mode=direct&page=1&page_size=10',
+            headers={'Authorization': f'Token {api_key}'},
+            timeout=10,
+        )
+        data = resp.json()
+        results = data.get('results', [])
+        if results:
+            p = results[0]
+            proxy_url = f"http://{p['username']}:{p['password']}@{p['proxy_address']}:{p['port']}"
+            return proxy_url
+    except Exception as e:
+        app.logger.error(f'Proxy fetch error: {e}')
+    return None
+
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -38,13 +60,15 @@ def get_transcript():
         return jsonify({'error': 'Invalid YouTube URL. Please paste a valid link.'}), 400
 
     try:
-        # If a Webshare proxy token is configured, use it to avoid YouTube IP blocks
-        proxy_token = os.environ.get('WEBSHARE_PROXY_TOKEN')
-        if proxy_token:
-            ytt = YouTubeTranscriptApi(
-                proxy_config=WebshareProxyConfig(proxy_token)
-            )
+        # Try with a proxy first if available, fall back to direct
+        proxy_url = get_free_proxy()
+        if proxy_url:
+            app.logger.info(f'Using proxy for {video_id}')
+            session = req.Session()
+            session.proxies = {'http': proxy_url, 'https': proxy_url}
+            ytt = YouTubeTranscriptApi(http_client=session)
         else:
+            app.logger.info(f'No proxy available, direct request for {video_id}')
             ytt = YouTubeTranscriptApi()
 
         transcript = ytt.fetch(video_id)
@@ -57,5 +81,3 @@ def get_transcript():
 
 if __name__ == '__main__':
     app.run(debug=True, port=5001)
-
-# Render uses gunicorn which imports 'app' directly from this module
